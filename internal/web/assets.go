@@ -25,6 +25,9 @@ func renderHome(stats NetworkStats) string {
     .stat { border: 1px solid color-mix(in srgb, CanvasText 18%%, transparent); border-radius: 8px; padding: 14px; }
     .value { display: block; font-size: 28px; font-weight: 700; }
     .label { color: color-mix(in srgb, CanvasText 70%%, transparent); font-size: 14px; }
+    .examples { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin: 16px 0 28px; }
+    .example { border: 1px solid color-mix(in srgb, CanvasText 18%%, transparent); border-radius: 8px; padding: 14px; }
+    .example [id^="ssps-"] { display: block; font-size: 28px; font-weight: 700; }
     a { color: LinkText; }
   </style>
 </head>
@@ -32,9 +35,10 @@ func renderHome(stats NetworkStats) string {
   <main>
     <h1>Stupid Simple Presence Service</h1>
     <p>SSPS gives any website a tiny live visitor counter and visit counter with one script tag.</p>
+    <p>The top stats are network-wide across every site using SSPS.</p>
     <div class="stats">
       <div class="stat"><span class="value">%d</span><span class="label">IDs created</span></div>
-      <div class="stat"><span class="value" id="ssps-live-count">%d</span><span class="label">users live now</span></div>
+      <div class="stat"><span class="value" data-ssps-live-count>%d</span><span class="label">users live now</span></div>
       <div class="stat"><span class="value">%d</span><span class="label">active sites</span></div>
       <div class="stat"><span class="value">%d</span><span class="label">total visits</span></div>
     </div>
@@ -46,6 +50,12 @@ func renderHome(stats NetworkStats) string {
     <pre><code>&lt;span id="ssps-live-count"&gt;&lt;/span&gt;
 &lt;span id="ssps-visit-count"&gt;&lt;/span&gt;
 &lt;span id="ssps-unique-visit-count"&gt;&lt;/span&gt;</code></pre>
+    <p>This page uses the reserved SSPS site ID <code>0</code>, so these are live examples of those spans updating:</p>
+    <div class="examples">
+      <div class="example"><span id="ssps-live-count">0</span><span class="label">active visitors</span></div>
+      <div class="example"><span id="ssps-visit-count">0</span><span class="label">visits to this page</span></div>
+      <div class="example"><span id="ssps-unique-visit-count">0</span><span class="label">unique visitors here</span></div>
+    </div>
     <h2>Programmatic API</h2>
     <pre><code>window.addEventListener("ssps:update", (event) =&gt; {
   console.log(event.detail.live, event.detail.totalHits, event.detail.uniqueVisitors)

@@ -34,8 +34,16 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	if !strings.Contains(home.Body.String(), "Stupid Simple Presence Service") {
 		t.Fatalf("/ body missing service name")
 	}
-	if !strings.Contains(home.Body.String(), `<span class="value" id="ssps-live-count">`) {
-		t.Fatalf("/ body missing ssps-prefixed live count span id")
+	if !strings.Contains(home.Body.String(), "The top stats are network-wide") {
+		t.Fatalf("/ body missing network-wide stats explanation")
+	}
+	if !strings.Contains(home.Body.String(), `<span class="value" data-ssps-live-count>`) {
+		t.Fatalf("/ body missing live-updating network stat")
+	}
+	if !strings.Contains(home.Body.String(), `<span id="ssps-live-count">0</span>`) ||
+		!strings.Contains(home.Body.String(), `<span id="ssps-visit-count">0</span>`) ||
+		!strings.Contains(home.Body.String(), `<span id="ssps-unique-visit-count">0</span>`) {
+		t.Fatalf("/ body missing rendered ssps-prefixed example spans")
 	}
 	if !strings.Contains(home.Body.String(), `src="/ssps.js" data-site-id="0"`) {
 		t.Fatalf("/ body missing self-use script for reserved site 0")
