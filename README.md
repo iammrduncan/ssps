@@ -42,8 +42,8 @@ The script updates these elements when present:
 
 ```html
 <span id="ssps-live-count"></span>
-<span id="visit-count"></span>
-<span id="unique-visit-count"></span>
+<span id="ssps-visit-count"></span>
+<span id="ssps-unique-visit-count"></span>
 ```
 
 Equivalent data attributes also work:

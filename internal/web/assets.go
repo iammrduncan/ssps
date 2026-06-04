@@ -44,8 +44,8 @@ func renderHome(stats NetworkStats) string {
     <h2>DOM Counters</h2>
     <p>The script updates these elements when they exist:</p>
     <pre><code>&lt;span id="ssps-live-count"&gt;&lt;/span&gt;
-&lt;span id="visit-count"&gt;&lt;/span&gt;
-&lt;span id="unique-visit-count"&gt;&lt;/span&gt;</code></pre>
+&lt;span id="ssps-visit-count"&gt;&lt;/span&gt;
+&lt;span id="ssps-unique-visit-count"&gt;&lt;/span&gt;</code></pre>
     <h2>Programmatic API</h2>
     <pre><code>window.addEventListener("ssps:update", (event) =&gt; {
   console.log(event.detail.live, event.detail.totalHits, event.detail.uniqueVisitors)
@@ -119,8 +119,8 @@ func scriptJS() string {
   function publish(next) {
     state = next;
     setText("#ssps-live-count,[data-ssps-live-count]", state.live);
-    setText("#visit-count,[data-ssps-visit-count]", state.totalHits);
-    setText("#unique-visit-count,[data-ssps-unique-visit-count]", state.uniqueVisitors);
+    setText("#ssps-visit-count,[data-ssps-visit-count]", state.totalHits);
+    setText("#ssps-unique-visit-count,[data-ssps-unique-visit-count]", state.uniqueVisitors);
     listeners.forEach(function (listener) { listener(state); });
     window.dispatchEvent(new CustomEvent("ssps:update", { detail: state }));
   }

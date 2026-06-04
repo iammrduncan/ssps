@@ -27,7 +27,19 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	server := newTestServer(t)
 
 	assertStatus(t, server, "/healthz", http.StatusOK, "ok")
-	assertStatus(t, server, "/", http.StatusOK, "Stupid Simple Presence Service")
+	home := get(t, server, "/")
+	if home.Code != http.StatusOK {
+		t.Fatalf("/ status = %d, want 200", home.Code)
+	}
+	if !strings.Contains(home.Body.String(), "Stupid Simple Presence Service") {
+		t.Fatalf("/ body missing service name")
+	}
+	if !strings.Contains(home.Body.String(), `id="ssps-visit-count"`) {
+		t.Fatalf("/ body missing ssps-prefixed visit span id")
+	}
+	if strings.Contains(home.Body.String(), `id="visit-count"`) || strings.Contains(home.Body.String(), `id="unique-visit-count"`) {
+		t.Fatalf("/ body contains unprefixed counter span id")
+	}
 
 	generate := get(t, server, "/generate")
 	if generate.Code != http.StatusOK {
@@ -49,6 +61,12 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	}
 	if !strings.Contains(script.Body.String(), "ssps-live-count") {
 		t.Fatalf("script body missing live count updater")
+	}
+	if !strings.Contains(script.Body.String(), "ssps-visit-count") || !strings.Contains(script.Body.String(), "ssps-unique-visit-count") {
+		t.Fatalf("script body missing ssps-prefixed counter IDs")
+	}
+	if strings.Contains(script.Body.String(), "#visit-count") || strings.Contains(script.Body.String(), "#unique-visit-count") {
+		t.Fatalf("script body contains unprefixed counter ID selectors")
 	}
 
 	stats := get(t, server, "/api/stats")

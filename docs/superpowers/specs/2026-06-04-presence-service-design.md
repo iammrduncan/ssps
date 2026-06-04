@@ -95,9 +95,9 @@ Default DOM targets:
 
 - `#ssps-live-count`
 - `[data-ssps-live-count]`
-- `#visit-count`
+- `#ssps-visit-count`
 - `[data-ssps-visit-count]`
-- `#unique-visit-count`
+- `#ssps-unique-visit-count`
 - `[data-ssps-unique-visit-count]`
 
 Programmatic surface:
@@ -193,4 +193,3 @@ Fresh verification before completion must include:
 go test ./...
 go build ./cmd/ssps
 ```
-
