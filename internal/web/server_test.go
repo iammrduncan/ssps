@@ -50,6 +50,11 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	if !strings.Contains(home.Body.String(), `Made with &lt;3 by <a href="https://iammrduncan.com">Shannon</a>`) {
 		t.Fatalf("/ body missing Shannon credit")
 	}
+	if !strings.Contains(home.Body.String(), `<!-- Fathom - beautiful, simple website analytics -->
+<script src="https://cdn.usefathom.com/script.js" data-site="TETCAXTQ" defer></script>
+<!-- / Fathom -->`) {
+		t.Fatalf("/ body missing Fathom analytics snippet")
+	}
 	if !strings.Contains(home.Body.String(), `<span class="value" data-ssps-network-live-users>`) ||
 		!strings.Contains(home.Body.String(), `<span class="value" data-ssps-network-total-visits>`) {
 		t.Fatalf("/ body missing live-updating network stats")
@@ -83,6 +88,9 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	}
 	if !strings.Contains(generate.Body.String(), `data-site-id=&#34;1&#34;`) {
 		t.Fatalf("/generate body missing site id snippet: %s", generate.Body.String())
+	}
+	if !strings.Contains(generate.Body.String(), `src="https://cdn.usefathom.com/script.js" data-site="TETCAXTQ" defer`) {
+		t.Fatalf("/generate body missing Fathom analytics snippet")
 	}
 
 	script := get(t, server, "/ssps.js")
@@ -153,6 +161,12 @@ func TestSecurityHeaders(t *testing.T) {
 	csp := rec.Header().Get("Content-Security-Policy")
 	if !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") {
 		t.Fatalf("Content-Security-Policy = %q, want restrictive default and frame ancestors", csp)
+	}
+	if !strings.Contains(csp, "script-src 'self' https://cdn.usefathom.com") {
+		t.Fatalf("Content-Security-Policy = %q, want Fathom script allowance", csp)
+	}
+	if !strings.Contains(csp, "img-src 'self' https://cdn.usefathom.com") {
+		t.Fatalf("Content-Security-Policy = %q, want Fathom image/beacon allowance", csp)
 	}
 }
 

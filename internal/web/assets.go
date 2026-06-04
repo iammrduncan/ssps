@@ -13,6 +13,9 @@ func renderHome(stats NetworkStats) string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SSPS - Stupid Simple Presence Service</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<!-- Fathom - beautiful, simple website analytics -->
+<script src="https://cdn.usefathom.com/script.js" data-site="TETCAXTQ" defer></script>
+<!-- / Fathom -->
   <style>
     :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; background: Canvas; color: CanvasText; }
@@ -86,6 +89,9 @@ func renderGenerate(siteID int64, scriptURL string) string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SSPS Site %d</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<!-- Fathom - beautiful, simple website analytics -->
+<script src="https://cdn.usefathom.com/script.js" data-site="TETCAXTQ" defer></script>
+<!-- / Fathom -->
   <style>
     :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     main { max-width: 760px; margin: 0 auto; padding: 48px 20px; }
