@@ -180,8 +180,9 @@ Actions on a real run:
 apt-get update
 apt-get install -y ${SSPS_APT_PACKAGES}
 useradd --system --home ${SSPS_DATA_DIR} --shell /usr/sbin/nologin ${SSPS_USER}
-go test ./...: ${SSPS_RUN_TESTS}
-go build -o <tmp> ./cmd/ssps
+verify Go 1.22 or newer
+GOTOOLCHAIN=local go test ./...: ${SSPS_RUN_TESTS}
+GOTOOLCHAIN=local go build -o <tmp> ./cmd/ssps
 install binary to ${SSPS_BINARY}
 write ${SSPS_ENV_FILE}
 write ${SERVICE_FILE}
@@ -215,15 +216,48 @@ ensure_user_and_dirs() {
   install -d -m 755 -o "${SSPS_USER}" -g "${SSPS_GROUP}" "${SSPS_DATA_DIR}"
 }
 
+verify_go_version() {
+  if ! command -v go >/dev/null 2>&1; then
+    echo "go is not installed after apt install; check SSPS_APT_PACKAGES" >&2
+    exit 1
+  fi
+
+  local version
+  version="$(GOTOOLCHAIN=local go env GOVERSION 2>/dev/null || true)"
+  if [[ -z "${version}" ]]; then
+    version="$(GOTOOLCHAIN=local go version | awk '{print $3}')"
+  fi
+  version="${version#go}"
+
+  local major
+  local minor
+  local rest
+  major="${version%%.*}"
+  rest="${version#*.}"
+  minor="${rest%%.*}"
+  minor="${minor%%[^0-9]*}"
+
+  if [[ -z "${major}" || -z "${minor}" || ! "${major}" =~ ^[0-9]+$ || ! "${minor}" =~ ^[0-9]+$ ]]; then
+    echo "could not determine Go version from: ${version}" >&2
+    exit 1
+  fi
+
+  if ((major < 1 || (major == 1 && minor < 22))); then
+    echo "Go 1.22 or newer is required; install a newer golang package or set SSPS_APT_PACKAGES accordingly" >&2
+    exit 1
+  fi
+}
+
 build_and_install_binary() {
   local build_path
+  verify_go_version
   build_path="$(mktemp)"
   (
     cd "${ROOT_DIR}"
     if [[ "${SSPS_RUN_TESTS}" == "1" ]]; then
-      GOTOOLCHAIN=auto go test ./...
+      GOTOOLCHAIN=local go test ./...
     fi
-    GOTOOLCHAIN=auto go build -o "${build_path}" ./cmd/ssps
+    GOTOOLCHAIN=local go build -o "${build_path}" ./cmd/ssps
   )
   install -m 755 "${build_path}" "${SSPS_BINARY}"
   rm -f "${build_path}"
