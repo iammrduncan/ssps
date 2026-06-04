@@ -205,7 +205,7 @@ func (s *Server) networkStats(ctx context.Context) (NetworkStats, error) {
 		IDsCreated:  stored.IDsCreated,
 		LiveUsers:   s.hub.LiveUsers(),
 		ActiveSites: s.hub.ActiveSites(),
-		TotalVisits: stored.TotalVisits,
+		TotalVisits: stored.TotalVisits + s.counter.TotalPendingHits(),
 	}, nil
 }
 

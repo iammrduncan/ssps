@@ -67,6 +67,17 @@ func (a *Aggregator) Pending(siteID int64) PendingStats {
 	return PendingStats{Hits: events.hits, UniqueVisitors: int64(len(events.visitors))}
 }
 
+func (a *Aggregator) TotalPendingHits() int64 {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	var total int64
+	for _, events := range a.pending {
+		total += events.hits
+	}
+	return total
+}
+
 func (a *Aggregator) Flush(ctx context.Context) error {
 	batches := a.drain()
 	if len(batches) == 0 {

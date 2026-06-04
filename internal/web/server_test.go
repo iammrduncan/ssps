@@ -109,6 +109,18 @@ func TestWebSocketConnectionCountsLiveUserAndVisit(t *testing.T) {
 	if site.UniqueVisitors != 1 {
 		t.Fatalf("unique visitors = %d, want 1", site.UniqueVisitors)
 	}
+
+	stats := get(t, server, "/api/stats")
+	if stats.Code != http.StatusOK {
+		t.Fatalf("/api/stats status = %d, want 200", stats.Code)
+	}
+	var network NetworkStats
+	if err := json.Unmarshal(stats.Body.Bytes(), &network); err != nil {
+		t.Fatalf("decode network stats: %v", err)
+	}
+	if network.TotalVisits != 1 {
+		t.Fatalf("network total visits = %d, want 1 pending visit included", network.TotalVisits)
+	}
 }
 
 type testServer struct {
