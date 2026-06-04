@@ -53,6 +53,7 @@ Main risks:
   - Caps the number of site IDs admitted into a pending flush window.
   - Caps unique visitor IDs tracked per site in a pending flush window.
   - Hit counts continue for admitted sites even after the unique visitor cap is reached.
+- Removed synchronous per-site WebSocket fanout from the hot connect/disconnect path. Presence updates are coalesced by interval so one site change does not immediately iterate every connected browser for that site.
 - Added jittered exponential reconnect backoff in the embed script to reduce reconnect spikes after deploys, crashes, or proxy interruptions.
 
 ## Remaining Risks And Next Hardening

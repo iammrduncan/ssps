@@ -27,3 +27,33 @@ func TestHTTPServerHasDefensiveLimits(t *testing.T) {
 		t.Fatalf("MaxHeaderBytes = %d, want a non-zero cap no larger than 32KiB", server.MaxHeaderBytes)
 	}
 }
+
+func TestParseMaintenanceDurationEnv(t *testing.T) {
+	t.Setenv("SSPS_DB_CHECKPOINT_INTERVAL", "2m")
+	t.Setenv("SSPS_DB_COMPACT_INTERVAL", "6h")
+	t.Setenv("SSPS_WS_UPDATE_INTERVAL", "45s")
+
+	checkpointInterval, err := parseDurationEnv("SSPS_DB_CHECKPOINT_INTERVAL", 5*time.Minute)
+	if err != nil {
+		t.Fatalf("parse checkpoint interval: %v", err)
+	}
+	if checkpointInterval != 2*time.Minute {
+		t.Fatalf("checkpoint interval = %s, want 2m", checkpointInterval)
+	}
+
+	compactInterval, err := parseDurationEnv("SSPS_DB_COMPACT_INTERVAL", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("parse compact interval: %v", err)
+	}
+	if compactInterval != 6*time.Hour {
+		t.Fatalf("compact interval = %s, want 6h", compactInterval)
+	}
+
+	webSocketUpdateInterval, err := parseDurationEnv("SSPS_WS_UPDATE_INTERVAL", 30*time.Second)
+	if err != nil {
+		t.Fatalf("parse websocket update interval: %v", err)
+	}
+	if webSocketUpdateInterval != 45*time.Second {
+		t.Fatalf("websocket update interval = %s, want 45s", webSocketUpdateInterval)
+	}
+}

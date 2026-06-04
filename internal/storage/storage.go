@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,6 +27,21 @@ import (
 type Store struct {
 	mu sync.Mutex
 	db *C.sqlite3
+}
+
+type CheckpointMode string
+
+const (
+	CheckpointPassive  CheckpointMode = "PASSIVE"
+	CheckpointFull     CheckpointMode = "FULL"
+	CheckpointRestart  CheckpointMode = "RESTART"
+	CheckpointTruncate CheckpointMode = "TRUNCATE"
+)
+
+type CheckpointStats struct {
+	Busy               bool
+	LogFrames          int64
+	CheckpointedFrames int64
 }
 
 type VisitBatch struct {
@@ -140,38 +156,56 @@ func (s *Store) ApplyVisitBatch(ctx context.Context, batches []VisitBatch) error
 		}
 	}()
 
+	ensureCounterStmt, err := s.prepare(`
+		INSERT INTO site_counters (site_id, total_hits, unique_visitors, updated_at)
+		VALUES (?, 0, 0, ?)
+		ON CONFLICT(site_id) DO NOTHING
+	`)
+	if err != nil {
+		return err
+	}
+	defer C.sqlite3_finalize(ensureCounterStmt)
+
+	insertVisitorStmt, err := s.prepare(`
+		INSERT OR IGNORE INTO site_visitors (site_id, visitor_id, first_seen_at)
+		VALUES (?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer C.sqlite3_finalize(insertVisitorStmt)
+
+	updateCounterStmt, err := s.prepare(`
+		UPDATE site_counters
+		SET total_hits = total_hits + ?,
+		    unique_visitors = unique_visitors + ?,
+		    updated_at = ?
+		WHERE site_id = ?
+	`)
+	if err != nil {
+		return err
+	}
+	defer C.sqlite3_finalize(updateCounterStmt)
+
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, batch := range batches {
 		if batch.SiteID < 0 || batch.Hits <= 0 {
 			continue
 		}
 
-		if err := s.execPrepared(`
-			INSERT INTO site_counters (site_id, total_hits, unique_visitors, updated_at)
-			VALUES (?, 0, 0, ?)
-			ON CONFLICT(site_id) DO NOTHING
-		`, bindInt64Arg(batch.SiteID), bindTextArg(now)); err != nil {
+		if err := s.execStmt(ensureCounterStmt, "ensure counter", bindInt64Arg(batch.SiteID), bindTextArg(now)); err != nil {
 			return fmt.Errorf("ensure counter for site %d: %w", batch.SiteID, err)
 		}
 
 		insertedVisitors := int64(0)
 		for _, visitorID := range uniqueStrings(batch.VisitorIDs) {
-			if err := s.execPrepared(`
-				INSERT OR IGNORE INTO site_visitors (site_id, visitor_id, first_seen_at)
-				VALUES (?, ?, ?)
-			`, bindInt64Arg(batch.SiteID), bindTextArg(visitorID), bindTextArg(now)); err != nil {
+			if err := s.execStmt(insertVisitorStmt, "insert visitor", bindInt64Arg(batch.SiteID), bindTextArg(visitorID), bindTextArg(now)); err != nil {
 				return fmt.Errorf("insert visitor for site %d: %w", batch.SiteID, err)
 			}
 			insertedVisitors += int64(C.sqlite3_changes(s.db))
 		}
 
-		if err := s.execPrepared(`
-			UPDATE site_counters
-			SET total_hits = total_hits + ?,
-			    unique_visitors = unique_visitors + ?,
-			    updated_at = ?
-			WHERE site_id = ?
-		`, bindInt64Arg(batch.Hits), bindInt64Arg(insertedVisitors), bindTextArg(now), bindInt64Arg(batch.SiteID)); err != nil {
+		if err := s.execStmt(updateCounterStmt, "update counter", bindInt64Arg(batch.Hits), bindInt64Arg(insertedVisitors), bindTextArg(now), bindInt64Arg(batch.SiteID)); err != nil {
 			return fmt.Errorf("update counter for site %d: %w", batch.SiteID, err)
 		}
 	}
@@ -239,6 +273,131 @@ func (s *Store) StoredStats(ctx context.Context) (StoredStats, error) {
 	return stats, nil
 }
 
+func (s *Store) Checkpoint(ctx context.Context, mode CheckpointMode) (CheckpointStats, error) {
+	if err := ctx.Err(); err != nil {
+		return CheckpointStats{}, err
+	}
+	if mode == "" {
+		mode = CheckpointPassive
+	}
+	if !validCheckpointMode(mode) {
+		return CheckpointStats{}, fmt.Errorf("unknown checkpoint mode %q", mode)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stmt, err := s.prepare(fmt.Sprintf(`PRAGMA wal_checkpoint(%s)`, mode))
+	if err != nil {
+		return CheckpointStats{}, err
+	}
+	defer C.sqlite3_finalize(stmt)
+
+	rc := C.sqlite3_step(stmt)
+	if rc == C.SQLITE_DONE {
+		return CheckpointStats{}, nil
+	}
+	if rc != C.SQLITE_ROW {
+		return CheckpointStats{}, sqliteError(s.db, "checkpoint wal")
+	}
+	return CheckpointStats{
+		Busy:               C.sqlite3_column_int64(stmt, 0) != 0,
+		LogFrames:          int64(C.sqlite3_column_int64(stmt, 1)),
+		CheckpointedFrames: int64(C.sqlite3_column_int64(stmt, 2)),
+	}, nil
+}
+
+func (s *Store) Compact(ctx context.Context, pages int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if pages <= 0 {
+		pages = 1000
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if err := s.ensureIncrementalVacuum(); err != nil {
+		return err
+	}
+	if err := s.exec(fmt.Sprintf(`PRAGMA incremental_vacuum(%d)`, pages)); err != nil {
+		return fmt.Errorf("incremental vacuum: %w", err)
+	}
+	stmt, err := s.prepare(`PRAGMA wal_checkpoint(TRUNCATE)`)
+	if err != nil {
+		return err
+	}
+	rc := C.sqlite3_step(stmt)
+	finalizeRC := C.sqlite3_finalize(stmt)
+	if rc != C.SQLITE_ROW && rc != C.SQLITE_DONE {
+		return sqliteError(s.db, "truncate wal")
+	}
+	if finalizeRC != C.SQLITE_OK {
+		return sqliteError(s.db, "finalize truncate wal")
+	}
+	if err := s.exec(`PRAGMA optimize`); err != nil {
+		return fmt.Errorf("optimize sqlite: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ensureIncrementalVacuum() error {
+	autoVacuum, err := s.queryInt64(`PRAGMA auto_vacuum`)
+	if err != nil {
+		return fmt.Errorf("read auto vacuum: %w", err)
+	}
+	if autoVacuum == 2 {
+		return nil
+	}
+	if err := s.exec(`PRAGMA auto_vacuum = INCREMENTAL`); err != nil {
+		return fmt.Errorf("enable incremental vacuum: %w", err)
+	}
+	if err := s.exec(`VACUUM`); err != nil {
+		return fmt.Errorf("vacuum sqlite for incremental vacuum: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) RunMaintenance(ctx context.Context, checkpointInterval time.Duration, compactInterval time.Duration) {
+	if checkpointInterval <= 0 {
+		checkpointInterval = 5 * time.Minute
+	}
+	if compactInterval <= 0 {
+		compactInterval = 24 * time.Hour
+	}
+
+	checkpointTicker := time.NewTicker(checkpointInterval)
+	compactTicker := time.NewTicker(compactInterval)
+	defer checkpointTicker.Stop()
+	defer compactTicker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if _, err := s.Checkpoint(shutdownCtx, CheckpointTruncate); err != nil {
+				slog.Error("checkpoint sqlite during shutdown", "error", err)
+			}
+			cancel()
+			return
+		case <-checkpointTicker.C:
+			stats, err := s.Checkpoint(ctx, CheckpointPassive)
+			if err != nil {
+				slog.Error("checkpoint sqlite", "error", err)
+				continue
+			}
+			if stats.Busy {
+				slog.Debug("sqlite checkpoint busy", "logFrames", stats.LogFrames, "checkpointedFrames", stats.CheckpointedFrames)
+			}
+		case <-compactTicker.C:
+			if err := s.Compact(ctx, 1000); err != nil {
+				slog.Error("compact sqlite", "error", err)
+			}
+		}
+	}
+}
+
 func (s *Store) configure(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -248,7 +407,13 @@ func (s *Store) configure(ctx context.Context) error {
 	defer s.mu.Unlock()
 
 	pragmas := []string{
+		`PRAGMA page_size = 4096`,
+		`PRAGMA auto_vacuum = INCREMENTAL`,
 		`PRAGMA journal_mode = WAL`,
+		`PRAGMA synchronous = NORMAL`,
+		`PRAGMA wal_autocheckpoint = 0`,
+		`PRAGMA journal_size_limit = 67108864`,
+		`PRAGMA temp_store = MEMORY`,
 		`PRAGMA busy_timeout = 5000`,
 		`PRAGMA foreign_keys = ON`,
 	}
@@ -339,6 +504,34 @@ func (s *Store) execPrepared(sql string, args ...bindArg) error {
 	return stepDone(stmt, sql)
 }
 
+func (s *Store) execStmt(stmt *C.sqlite3_stmt, action string, args ...bindArg) error {
+	for idx, arg := range args {
+		if err := bind(stmt, idx+1, arg); err != nil {
+			_ = resetStmt(stmt)
+			return err
+		}
+	}
+
+	stepErr := stepDone(stmt, action)
+	resetErr := resetStmt(stmt)
+	if stepErr != nil {
+		return stepErr
+	}
+	return resetErr
+}
+
+func resetStmt(stmt *C.sqlite3_stmt) error {
+	resetRC := C.sqlite3_reset(stmt)
+	clearRC := C.sqlite3_clear_bindings(stmt)
+	if resetRC != C.SQLITE_OK {
+		return fmt.Errorf("reset sqlite statement: sqlite code %d", int(resetRC))
+	}
+	if clearRC != C.SQLITE_OK {
+		return fmt.Errorf("clear sqlite bindings: sqlite code %d", int(clearRC))
+	}
+	return nil
+}
+
 func (s *Store) prepare(sql string) (*C.sqlite3_stmt, error) {
 	csql := C.CString(sql)
 	defer C.free(unsafe.Pointer(csql))
@@ -365,6 +558,27 @@ func (s *Store) queryInt64(sql string) (int64, error) {
 		return 0, sqliteError(s.db, sql)
 	}
 	return int64(C.sqlite3_column_int64(stmt, 0)), nil
+}
+
+func (s *Store) queryText(sql string) (string, error) {
+	stmt, err := s.prepare(sql)
+	if err != nil {
+		return "", err
+	}
+	defer C.sqlite3_finalize(stmt)
+
+	rc := C.sqlite3_step(stmt)
+	if rc == C.SQLITE_DONE {
+		return "", nil
+	}
+	if rc != C.SQLITE_ROW {
+		return "", sqliteError(s.db, sql)
+	}
+	text := C.sqlite3_column_text(stmt, 0)
+	if text == nil {
+		return "", nil
+	}
+	return C.GoString((*C.char)(unsafe.Pointer(text))), nil
 }
 
 func bind(stmt *C.sqlite3_stmt, idx int, arg bindArg) error {
@@ -406,6 +620,15 @@ func sqliteError(db *C.sqlite3, action string) error {
 		return fmt.Errorf("%s: sqlite unavailable", action)
 	}
 	return fmt.Errorf("%s: %s", action, C.GoString(C.sqlite3_errmsg(db)))
+}
+
+func validCheckpointMode(mode CheckpointMode) bool {
+	switch mode {
+	case CheckpointPassive, CheckpointFull, CheckpointRestart, CheckpointTruncate:
+		return true
+	default:
+		return false
+	}
 }
 
 func uniqueStrings(values []string) []string {

@@ -21,7 +21,7 @@ type PendingStats struct {
 
 const (
 	defaultMaxPendingSites           = 100000
-	defaultMaxPendingVisitorsPerSite = 100000
+	defaultMaxPendingVisitorsPerSite = 500000
 )
 
 type Aggregator struct {

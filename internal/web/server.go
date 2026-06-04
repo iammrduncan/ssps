@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,10 +25,12 @@ import (
 )
 
 const (
-	maxVisitorIDLength          = 128
-	maxClientWebSocketFrameSize = 4096
-	generateRequestsPerWindow   = 20
-	generateRateLimitWindow     = time.Hour
+	maxVisitorIDLength             = 128
+	maxClientWebSocketFrameSize    = 4096
+	generateRequestsPerWindow      = 20
+	generateRateLimitWindow        = time.Hour
+	defaultWebSocketUpdateInterval = 30 * time.Second
+	webSocketWriteTimeout          = 5 * time.Second
 )
 
 type store interface {
@@ -37,11 +40,16 @@ type store interface {
 }
 
 type Server struct {
-	store           store
-	hub             *presence.Hub
-	counter         *counter.Aggregator
-	generateLimiter *rateLimiter
-	mux             *http.ServeMux
+	store                   store
+	hub                     *presence.Hub
+	counter                 *counter.Aggregator
+	generateLimiter         *rateLimiter
+	webSocketUpdateInterval time.Duration
+	mux                     *http.ServeMux
+}
+
+type Options struct {
+	WebSocketUpdateInterval time.Duration
 }
 
 type SiteStats struct {
@@ -100,12 +108,20 @@ func (l *rateLimiter) Allow(client string, now time.Time) bool {
 }
 
 func NewServer(store store, hub *presence.Hub, aggregator *counter.Aggregator) http.Handler {
+	return NewServerWithOptions(store, hub, aggregator, Options{})
+}
+
+func NewServerWithOptions(store store, hub *presence.Hub, aggregator *counter.Aggregator, options Options) http.Handler {
+	if options.WebSocketUpdateInterval <= 0 {
+		options.WebSocketUpdateInterval = defaultWebSocketUpdateInterval
+	}
 	server := &Server{
-		store:           store,
-		hub:             hub,
-		counter:         aggregator,
-		generateLimiter: newRateLimiter(generateRequestsPerWindow, generateRateLimitWindow),
-		mux:             http.NewServeMux(),
+		store:                   store,
+		hub:                     hub,
+		counter:                 aggregator,
+		generateLimiter:         newRateLimiter(generateRequestsPerWindow, generateRateLimitWindow),
+		webSocketUpdateInterval: options.WebSocketUpdateInterval,
+		mux:                     http.NewServeMux(),
 	}
 	server.routes()
 	return server
@@ -208,41 +224,33 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	connection, updates := s.hub.Register(siteID)
+	connection := s.hub.Register(siteID)
 	defer func() {
 		s.hub.Unregister(connection)
-		s.broadcastSiteChange(siteID)
 	}()
 
 	s.counter.Record(siteID, visitorID)
 	if err := s.writeSiteStats(r.Context(), conn, siteID); err != nil {
 		return
 	}
-	s.broadcastSiteChange(siteID)
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			if err := conn.ReadLoop(r.Context()); err != nil {
-				return
-			}
-		}
-	}()
+	lastSnapshot := s.hub.SiteSnapshot(siteID)
 
 	for {
-		select {
-		case <-r.Context().Done():
+		if err := conn.SetReadDeadline(time.Now().Add(s.webSocketUpdateInterval)); err != nil {
 			return
-		case <-done:
+		}
+		if err := conn.ReadFrame(r.Context()); err == nil {
+			continue
+		} else if !isTimeout(err) {
 			return
-		case _, ok := <-updates:
-			if !ok {
-				return
-			}
+		}
+
+		snapshot := s.hub.SiteSnapshot(siteID)
+		if snapshot.Version != lastSnapshot.Version {
 			if err := s.writeSiteStats(r.Context(), conn, siteID); err != nil {
 				return
 			}
+			lastSnapshot = snapshot
 		}
 	}
 }
@@ -284,13 +292,6 @@ func (s *Server) writeSiteStats(ctx context.Context, conn *wsConn, siteID int64)
 		return err
 	}
 	return conn.WriteText(ctx, payload)
-}
-
-func (s *Server) broadcastSiteChange(siteID int64) {
-	s.hub.Broadcast(siteID)
-	if siteID != 0 {
-		s.hub.Broadcast(0)
-	}
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
@@ -443,22 +444,21 @@ func acceptWebSocket(w http.ResponseWriter, r *http.Request) (*wsConn, error) {
 	return &wsConn{conn: netConn, reader: rw.Reader}, nil
 }
 
-func (c *wsConn) ReadLoop(ctx context.Context) error {
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		opcode, payload, err := c.readFrame()
-		if err != nil {
-			return err
-		}
-		switch opcode {
-		case 0x8:
-			return io.EOF
-		case 0x9:
-			_ = c.writeFrame(0xA, payload)
-		}
+func (c *wsConn) ReadFrame(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	opcode, payload, err := c.readFrame()
+	if err != nil {
+		return err
+	}
+	switch opcode {
+	case 0x8:
+		return io.EOF
+	case 0x9:
+		_ = c.writeFrame(0xA, payload)
+	}
+	return nil
 }
 
 func (c *wsConn) WriteText(ctx context.Context, payload []byte) error {
@@ -466,6 +466,10 @@ func (c *wsConn) WriteText(ctx context.Context, payload []byte) error {
 		return err
 	}
 	return c.writeFrame(0x1, payload)
+}
+
+func (c *wsConn) SetReadDeadline(deadline time.Time) error {
+	return c.conn.SetReadDeadline(deadline)
 }
 
 func (c *wsConn) Close() error {
@@ -534,6 +538,9 @@ func (c *wsConn) writeFrame(opcode byte, payload []byte) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if err := c.conn.SetWriteDeadline(time.Now().Add(webSocketWriteTimeout)); err != nil {
+		return err
+	}
 	header := []byte{0x80 | opcode}
 	switch {
 	case len(payload) < 126:
@@ -578,6 +585,11 @@ func validClientOpcode(opcode byte) bool {
 
 func isControlOpcode(opcode byte) bool {
 	return opcode == 0x8 || opcode == 0x9 || opcode == 0xA
+}
+
+func isTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 func headerContains(headers http.Header, key string, value string) bool {

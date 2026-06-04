@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -102,5 +103,73 @@ func TestStoreAllowsReservedSiteZeroCounters(t *testing.T) {
 	}
 	if createdID != 1 {
 		t.Fatalf("first generated customer id = %d, want 1", createdID)
+	}
+}
+
+func TestStoreConfiguresWALForManualMaintenance(t *testing.T) {
+	t.Parallel()
+
+	store, err := Open(filepath.Join(t.TempDir(), "ssps.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	journalMode, err := store.queryText(`PRAGMA journal_mode`)
+	if err != nil {
+		t.Fatalf("read journal mode: %v", err)
+	}
+	if journalMode != "wal" {
+		t.Fatalf("journal mode = %q, want wal", journalMode)
+	}
+
+	autoCheckpoint, err := store.queryInt64(`PRAGMA wal_autocheckpoint`)
+	if err != nil {
+		t.Fatalf("read wal autocheckpoint: %v", err)
+	}
+	if autoCheckpoint != 0 {
+		t.Fatalf("wal autocheckpoint = %d, want disabled for app-managed checkpoints", autoCheckpoint)
+	}
+
+	autoVacuum, err := store.queryInt64(`PRAGMA auto_vacuum`)
+	if err != nil {
+		t.Fatalf("read auto vacuum: %v", err)
+	}
+	if autoVacuum != 2 {
+		t.Fatalf("auto vacuum = %d, want incremental", autoVacuum)
+	}
+}
+
+func TestStoreCheckpointAndCompact(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "ssps.db")
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.ApplyVisitBatch(ctx, []VisitBatch{
+		{SiteID: 1, Hits: 2, VisitorIDs: []string{"a", "b"}},
+	}); err != nil {
+		t.Fatalf("apply visit batch: %v", err)
+	}
+
+	if _, err := os.Stat(dbPath + "-wal"); err != nil {
+		t.Fatalf("stat wal file: %v", err)
+	}
+
+	checkpoint, err := store.Checkpoint(ctx, CheckpointTruncate)
+	if err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	if checkpoint.Busy {
+		t.Fatalf("checkpoint busy = true, want false")
+	}
+
+	if err := store.Compact(ctx, 100); err != nil {
+		t.Fatalf("compact: %v", err)
 	}
 }

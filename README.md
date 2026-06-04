@@ -16,6 +16,9 @@ Configuration:
 SSPS_ADDR=:8080
 SSPS_DB_PATH=./data/ssps.db
 SSPS_FLUSH_INTERVAL=30m
+SSPS_DB_CHECKPOINT_INTERVAL=5m
+SSPS_DB_COMPACT_INTERVAL=24h
+SSPS_WS_UPDATE_INTERVAL=30s
 ```
 
 ## Embed
@@ -98,16 +101,17 @@ Example network response:
 
 ## Counters
 
-Live presence is in memory. Visits are recorded into an in-memory stream and compacted into SQLite on `SSPS_FLUSH_INTERVAL`, which defaults to 30 minutes. If the process crashes, unflushed visit events can be lost by design.
+Live presence is in memory. Visits are recorded into an in-memory stream and compacted into SQLite on `SSPS_FLUSH_INTERVAL`, which defaults to 30 minutes. SQLite runs in WAL mode with app-managed checkpoints on `SSPS_DB_CHECKPOINT_INTERVAL` and incremental compaction on `SSPS_DB_COMPACT_INTERVAL`. If the process crashes, unflushed visit events can be lost by design.
 
 ## VPS Notes
 
 For high WebSocket counts on a small Linux VPS:
 
-- Raise the process file descriptor limit, for example with systemd `LimitNOFILE=200000`.
+- Raise the process file descriptor limit, for example with systemd `LimitNOFILE=1048576`.
 - Put the service behind a reverse proxy that supports WebSocket upgrades.
 - Keep proxy read timeouts high enough for long-lived sockets.
 - Use one process for v1. If multiple app instances are needed later, move presence fanout and live counters behind Redis, NATS, or another shared coordination layer.
+- For very high single-node targets, see [Designing SSPS For 500,000 Concurrent Connections](docs/scaling-500k.md).
 
 For a full VPS deployment guide with `systemd`, crash/reboot restart behavior, and Cloudflare routing, see [Deploy SSPS Behind Cloudflare On A VPS](docs/deployment/cloudflare-vps.md).
 

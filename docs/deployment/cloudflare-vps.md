@@ -58,11 +58,15 @@ ExecStart=/opt/ssps/ssps
 Environment=SSPS_ADDR=127.0.0.1:8080
 Environment=SSPS_DB_PATH=/var/lib/ssps/ssps.db
 Environment=SSPS_FLUSH_INTERVAL=30m
+Environment=SSPS_DB_CHECKPOINT_INTERVAL=5m
+Environment=SSPS_DB_COMPACT_INTERVAL=24h
+Environment=SSPS_WS_UPDATE_INTERVAL=30s
 Restart=on-failure
 RestartSec=5s
 StartLimitIntervalSec=60
 StartLimitBurst=10
-LimitNOFILE=200000
+LimitNOFILE=1048576
+TasksMax=infinity
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
@@ -99,7 +103,9 @@ Why this survives routine failures:
 - `Restart=on-failure` restarts SSPS after crashes and non-zero exits.
 - `RestartSec=5s` avoids a tight restart loop.
 - `StartLimitIntervalSec` and `StartLimitBurst` cap runaway restarts.
-- `LimitNOFILE=200000` gives WebSocket-heavy workloads room for many open connections.
+- `LimitNOFILE=1048576` gives WebSocket-heavy workloads room for hundreds of thousands of open connections.
+- `SSPS_DB_CHECKPOINT_INTERVAL` and `SSPS_DB_COMPACT_INTERVAL` keep SQLite WAL and free pages maintained outside the hot request path.
+- `SSPS_WS_UPDATE_INTERVAL` coalesces live-count updates so one connection change does not synchronously fan out to every browser.
 - SQLite data lives in `/var/lib/ssps`, not inside the repo checkout.
 
 If you change the binary later:
@@ -245,11 +251,12 @@ Copy backup files off the VPS with `scp`, `rsync`, or your provider's snapshot s
 
 ## Notes For Scale
 
-SSPS keeps live presence in memory. A single process can handle many mostly-idle WebSockets, but the practical limit depends on VPS RAM, CPU, kernel limits, and Cloudflare connection behavior.
+SSPS keeps live presence in memory. A single process can handle many mostly-idle WebSockets, but the practical limit depends on VPS RAM, CPU, kernel limits, proxy behavior, and Cloudflare connection behavior. Treat 500,000 concurrent connections as a large single-VPS target that needs load testing on the exact VPS size and proxy path.
 
 For more headroom:
 
 - Keep `LimitNOFILE` high.
+- Keep `SSPS_WS_UPDATE_INTERVAL` at `30s` or higher for very large rooms so live count updates are coalesced.
 - Increase VPS RAM before adding architectural complexity.
 - Watch memory and file descriptors:
 
@@ -259,6 +266,8 @@ For more headroom:
   ```
 
 - Move live presence fanout to Redis or NATS only when one process is no longer enough.
+
+See [Designing SSPS For 500,000 Concurrent Connections](../scaling-500k.md) for OS, proxy, and SQLite tuning notes.
 
 ## References
 

@@ -261,26 +261,13 @@ func TestReservedSiteZeroReportsOwnLiveWhileNetworkStatsAggregate(t *testing.T) 
 		t.Fatalf("dial site zero websocket: %v", err)
 	}
 	defer siteZeroConn.Close()
-	if _, err := readServerTextFrame(siteZeroReader); err != nil {
-		t.Fatalf("read site zero initial payload: %v", err)
-	}
-	if _, err := readServerTextFrame(siteZeroReader); err != nil {
-		t.Fatalf("read site zero self-broadcast payload: %v", err)
-	}
-
-	siteOneConn, _, err := dialWebSocket(httpServer.URL, "/ws?site-id=1&visitor-id=customer")
-	if err != nil {
-		t.Fatalf("dial site one websocket: %v", err)
-	}
-	defer siteOneConn.Close()
-
 	payload, err := readServerTextFrame(siteZeroReader)
 	if err != nil {
-		t.Fatalf("read site zero update payload: %v", err)
+		t.Fatalf("read site zero initial payload: %v", err)
 	}
 	var site SiteStats
 	if err := json.Unmarshal(payload, &site); err != nil {
-		t.Fatalf("decode site zero update payload: %v", err)
+		t.Fatalf("decode site zero initial payload: %v", err)
 	}
 	if site.SiteID != 0 {
 		t.Fatalf("site id = %d, want 0", site.SiteID)
@@ -288,6 +275,12 @@ func TestReservedSiteZeroReportsOwnLiveWhileNetworkStatsAggregate(t *testing.T) 
 	if site.Live != 1 {
 		t.Fatalf("reserved site live = %d, want only site zero live users 1", site.Live)
 	}
+
+	siteOneConn, _, err := dialWebSocket(httpServer.URL, "/ws?site-id=1&visitor-id=customer")
+	if err != nil {
+		t.Fatalf("dial site one websocket: %v", err)
+	}
+	defer siteOneConn.Close()
 
 	stats := get(t, server, "/api/stats")
 	if stats.Code != http.StatusOK {

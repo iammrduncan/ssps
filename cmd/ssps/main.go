@@ -30,6 +30,18 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	checkpointInterval, err := parseDurationEnv("SSPS_DB_CHECKPOINT_INTERVAL", 5*time.Minute)
+	if err != nil {
+		return err
+	}
+	compactInterval, err := parseDurationEnv("SSPS_DB_COMPACT_INTERVAL", 24*time.Hour)
+	if err != nil {
+		return err
+	}
+	webSocketUpdateInterval, err := parseDurationEnv("SSPS_WS_UPDATE_INTERVAL", 30*time.Second)
+	if err != nil {
+		return err
+	}
 
 	store, err := storage.Open(dbPath)
 	if err != nil {
@@ -43,12 +55,15 @@ func run() error {
 	hub := presence.NewHub()
 	aggregator := counter.NewAggregator(store)
 	go aggregator.Run(ctx, flushInterval)
+	go store.RunMaintenance(ctx, checkpointInterval, compactInterval)
 
-	server := newHTTPServer(addr, web.NewServer(store, hub, aggregator))
+	server := newHTTPServer(addr, web.NewServerWithOptions(store, hub, aggregator, web.Options{
+		WebSocketUpdateInterval: webSocketUpdateInterval,
+	}))
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("ssps listening", "addr", addr, "db", dbPath, "flushInterval", flushInterval)
+		slog.Info("ssps listening", "addr", addr, "db", dbPath, "flushInterval", flushInterval, "checkpointInterval", checkpointInterval, "compactInterval", compactInterval, "webSocketUpdateInterval", webSocketUpdateInterval)
 		errCh <- server.ListenAndServe()
 	}()
 
