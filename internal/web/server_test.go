@@ -37,6 +37,9 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	if !strings.Contains(home.Body.String(), "The top stats are network-wide") {
 		t.Fatalf("/ body missing network-wide stats explanation")
 	}
+	if !strings.Contains(home.Body.String(), `href="https://github.com/iammrduncan/ssps"`) {
+		t.Fatalf("/ body missing source code link")
+	}
 	if !strings.Contains(home.Body.String(), `<span class="value" data-ssps-network-live-users>`) ||
 		!strings.Contains(home.Body.String(), `<span class="value" data-ssps-network-total-visits>`) {
 		t.Fatalf("/ body missing live-updating network stats")

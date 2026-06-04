@@ -35,6 +35,7 @@ func renderHome(stats NetworkStats) string {
   <main>
     <h1>Stupid Simple Presence Service</h1>
     <p>SSPS gives any website a tiny live visitor counter and visit counter with one script tag.</p>
+    <p><a href="https://github.com/iammrduncan/ssps">Source code on GitHub</a></p>
     <p>The top stats are network-wide across every site using SSPS.</p>
     <div class="stats">
       <div class="stat"><span class="value" data-ssps-network-ids-created>%d</span><span class="label">IDs created</span></div>
