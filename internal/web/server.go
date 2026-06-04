@@ -135,6 +135,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /", s.handleHome)
 	s.mux.HandleFunc("GET /generate", s.handleGenerate)
+	s.mux.HandleFunc("GET /favicon.svg", s.handleFavicon)
 	s.mux.HandleFunc("GET /ssps.js", s.handleScript)
 	s.mux.HandleFunc("GET /api/stats", s.handleNetworkStats)
 	s.mux.HandleFunc("GET /api/sites/", s.handleSiteStats)
@@ -174,6 +175,12 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	fmt.Fprint(w, renderGenerate(siteID, absoluteScriptURL(r)))
+}
+
+func (s *Server) handleFavicon(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	fmt.Fprint(w, faviconSVG())
 }
 
 func (s *Server) handleScript(w http.ResponseWriter, _ *http.Request) {

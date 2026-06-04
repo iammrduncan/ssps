@@ -44,6 +44,12 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	if !strings.Contains(home.Body.String(), `href="https://github.com/iammrduncan/ssps"`) {
 		t.Fatalf("/ body missing source code link")
 	}
+	if !strings.Contains(home.Body.String(), `<link rel="icon" href="/favicon.svg" type="image/svg+xml">`) {
+		t.Fatalf("/ body missing favicon link")
+	}
+	if !strings.Contains(home.Body.String(), `Made with &lt;3 by <a href="https://iammrduncan.com">Shannon</a>`) {
+		t.Fatalf("/ body missing Shannon credit")
+	}
 	if !strings.Contains(home.Body.String(), `<span class="value" data-ssps-network-live-users>`) ||
 		!strings.Contains(home.Body.String(), `<span class="value" data-ssps-network-total-visits>`) {
 		t.Fatalf("/ body missing live-updating network stats")
@@ -58,6 +64,17 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	}
 	if strings.Contains(home.Body.String(), `id="live-count"`) || strings.Contains(home.Body.String(), `id="visit-count"`) || strings.Contains(home.Body.String(), `id="unique-visit-count"`) {
 		t.Fatalf("/ body contains unprefixed counter span id")
+	}
+
+	favicon := get(t, server, "/favicon.svg")
+	if favicon.Code != http.StatusOK {
+		t.Fatalf("/favicon.svg status = %d, want 200", favicon.Code)
+	}
+	if contentType := favicon.Header().Get("Content-Type"); !strings.Contains(contentType, "image/svg+xml") {
+		t.Fatalf("favicon content type = %q, want image/svg+xml", contentType)
+	}
+	if !strings.Contains(favicon.Body.String(), "<svg") || !strings.Contains(favicon.Body.String(), "SSPS") {
+		t.Fatalf("favicon body missing svg mark")
 	}
 
 	generate := get(t, server, "/generate")

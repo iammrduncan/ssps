@@ -12,6 +12,7 @@ func renderHome(stats NetworkStats) string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SSPS - Stupid Simple Presence Service</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <style>
     :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; background: Canvas; color: CanvasText; }
@@ -28,6 +29,7 @@ func renderHome(stats NetworkStats) string {
     .examples { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin: 16px 0 28px; }
     .example { border: 1px solid color-mix(in srgb, CanvasText 18%%, transparent); border-radius: 8px; padding: 14px; }
     .example [id^="ssps-"] { display: block; font-size: 28px; font-weight: 700; }
+    footer { border-top: 1px solid color-mix(in srgb, CanvasText 14%%, transparent); color: color-mix(in srgb, CanvasText 70%%, transparent); font-size: 14px; margin-top: 44px; padding-top: 18px; }
     a { color: LinkText; }
   </style>
 </head>
@@ -68,6 +70,7 @@ const stats = window.SSPS.getStats()</code></pre>
       <li><code>GET /api/stats</code> for network totals.</li>
       <li><code>GET /api/sites/{siteID}/stats</code> for one site.</li>
     </ul>
+    <footer>Made with &lt;3 by <a href="https://iammrduncan.com">Shannon</a></footer>
   </main>
   <script async src="/ssps.js" data-site-id="0" data-network-stats></script>
 </body>
@@ -82,6 +85,7 @@ func renderGenerate(siteID int64, scriptURL string) string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SSPS Site %d</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <style>
     :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     main { max-width: 760px; margin: 0 auto; padding: 48px 20px; }
@@ -97,6 +101,14 @@ func renderGenerate(siteID int64, scriptURL string) string {
   </main>
 </body>
 </html>`, siteID, siteID, html.EscapeString(snippet))
+}
+
+func faviconSVG() string {
+	return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="SSPS">
+  <rect width="64" height="64" rx="14" fill="#111827"/>
+  <path d="M16 20h32M16 32h32M16 44h32" stroke="#22c55e" stroke-width="5" stroke-linecap="round"/>
+  <text x="32" y="38" fill="#f8fafc" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="700" text-anchor="middle">SSPS</text>
+</svg>`
 }
 
 func scriptJS() string {
