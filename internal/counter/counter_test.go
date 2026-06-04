@@ -84,6 +84,39 @@ func TestAggregatorRecordsReservedSiteZero(t *testing.T) {
 	assertBatch(t, sink.batches, 0, 2, []string{"self"})
 }
 
+func TestAggregatorCapsPendingMemory(t *testing.T) {
+	t.Parallel()
+
+	sink := &recordingSink{}
+	aggregator := NewAggregator(sink)
+	aggregator.maxPendingSites = 1
+	aggregator.maxPendingVisitorsPerSite = 2
+
+	aggregator.Record(10, "a")
+	aggregator.Record(10, "b")
+	aggregator.Record(10, "c")
+	aggregator.Record(20, "z")
+
+	pending := aggregator.Pending(10)
+	if pending.Hits != 3 {
+		t.Fatalf("admitted site hits = %d, want 3", pending.Hits)
+	}
+	if pending.UniqueVisitors != 2 {
+		t.Fatalf("admitted site unique visitors = %d, want capped value 2", pending.UniqueVisitors)
+	}
+	if pending := aggregator.Pending(20); pending.Hits != 0 || pending.UniqueVisitors != 0 {
+		t.Fatalf("overflow site pending = %+v, want zero", pending)
+	}
+
+	if err := aggregator.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if len(sink.batches) != 1 {
+		t.Fatalf("flushed batches = %d, want 1 admitted site", len(sink.batches))
+	}
+	assertBatch(t, sink.batches, 10, 3, []string{"a", "b"})
+}
+
 type recordingSink struct {
 	err     error
 	batches []storage.VisitBatch

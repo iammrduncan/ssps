@@ -2,6 +2,7 @@ package web
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
@@ -13,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,6 +22,8 @@ import (
 	"github.com/josephduncan/ssps/internal/presence"
 	"github.com/josephduncan/ssps/internal/storage"
 )
+
+const testWebSocketKey = "dGhlIHNhbXBsZSBub25jZQ=="
 
 func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	t.Parallel()
@@ -87,6 +91,10 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 		!strings.Contains(script.Body.String(), "/api/stats") {
 		t.Fatalf("script body missing network stats updater")
 	}
+	if !strings.Contains(script.Body.String(), "reconnectDelay") ||
+		!strings.Contains(script.Body.String(), "Math.min(reconnectDelay * 2, 30000)") {
+		t.Fatalf("script body missing reconnect backoff")
+	}
 
 	stats := get(t, server, "/api/stats")
 	if stats.Code != http.StatusOK {
@@ -110,6 +118,82 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	}
 	if site.SiteID != 1 {
 		t.Fatalf("site id = %d, want 1", site.SiteID)
+	}
+}
+
+func TestSecurityHeaders(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	rec := get(t, server, "/")
+
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := rec.Header().Get("Referrer-Policy"); got != "no-referrer" {
+		t.Fatalf("Referrer-Policy = %q, want no-referrer", got)
+	}
+	csp := rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Fatalf("Content-Security-Policy = %q, want restrictive default and frame ancestors", csp)
+	}
+}
+
+func TestGenerateRateLimit(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	for idx := 0; idx < generateRequestsPerWindow; idx++ {
+		rec := get(t, server, "/generate")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("generate request %d status = %d, want 200", idx+1, rec.Code)
+		}
+	}
+
+	rec := get(t, server, "/generate")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("generate over limit status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+}
+
+func TestWebSocketRejectsInvalidHandshake(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	httpServer := httptest.NewServer(server.Handler)
+	defer httpServer.Close()
+
+	missingVersion := websocketHandshakeStatus(t, httpServer.URL, "/ws?site-id=0&visitor-id=abc", map[string]string{
+		"Sec-WebSocket-Key": testWebSocketKey,
+	})
+	if missingVersion != http.StatusBadRequest {
+		t.Fatalf("missing websocket version status = %d, want %d", missingVersion, http.StatusBadRequest)
+	}
+
+	invalidKey := websocketHandshakeStatus(t, httpServer.URL, "/ws?site-id=0&visitor-id=abc", map[string]string{
+		"Sec-WebSocket-Version": "13",
+		"Sec-WebSocket-Key":     "not-a-valid-key",
+	})
+	if invalidKey != http.StatusBadRequest {
+		t.Fatalf("invalid websocket key status = %d, want %d", invalidKey, http.StatusBadRequest)
+	}
+
+	longVisitorID := strings.Repeat("a", 129)
+	longVisitor := websocketHandshakeStatus(t, httpServer.URL, "/ws?site-id=0&visitor-id="+longVisitorID, map[string]string{
+		"Sec-WebSocket-Version": "13",
+		"Sec-WebSocket-Key":     testWebSocketKey,
+	})
+	if longVisitor != http.StatusBadRequest {
+		t.Fatalf("long visitor id websocket status = %d, want %d", longVisitor, http.StatusBadRequest)
+	}
+}
+
+func TestReadFrameRejectsUnmaskedClientFrames(t *testing.T) {
+	t.Parallel()
+
+	conn := &wsConn{reader: bufio.NewReader(bytes.NewReader([]byte{0x89, 0x00}))}
+	if _, _, err := conn.readFrame(); err == nil {
+		t.Fatal("readFrame err = nil, want unmasked client frame error")
 	}
 }
 
@@ -307,6 +391,49 @@ func dialWebSocket(serverURL string, path string) (net.Conn, *bufio.Reader, erro
 		}
 	}
 	return conn, reader, nil
+}
+
+func websocketHandshakeStatus(t *testing.T, serverURL string, path string, headers map[string]string) int {
+	t.Helper()
+
+	parsed, err := url.Parse(serverURL)
+	if err != nil {
+		t.Fatalf("parse server url: %v", err)
+	}
+	conn, err := net.Dial("tcp", parsed.Host)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer conn.Close()
+
+	var request strings.Builder
+	fmt.Fprintf(&request, "GET %s HTTP/1.1\r\n", path)
+	fmt.Fprintf(&request, "Host: %s\r\n", parsed.Host)
+	request.WriteString("Upgrade: websocket\r\n")
+	request.WriteString("Connection: Upgrade\r\n")
+	for key, value := range headers {
+		fmt.Fprintf(&request, "%s: %s\r\n", key, value)
+	}
+	request.WriteString("\r\n")
+
+	if _, err := conn.Write([]byte(request.String())); err != nil {
+		t.Fatalf("write websocket handshake: %v", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read websocket status: %v", err)
+	}
+	parts := strings.Fields(statusLine)
+	if len(parts) < 2 {
+		t.Fatalf("malformed websocket status line: %q", statusLine)
+	}
+	status, err := strconv.Atoi(parts[1])
+	if err != nil {
+		t.Fatalf("parse websocket status %q: %v", parts[1], err)
+	}
+	return status
 }
 
 func readServerTextFrame(reader *bufio.Reader) ([]byte, error) {

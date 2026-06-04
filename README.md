@@ -111,6 +111,8 @@ For high WebSocket counts on a small Linux VPS:
 
 For a full VPS deployment guide with `systemd`, crash/reboot restart behavior, and Cloudflare routing, see [Deploy SSPS Behind Cloudflare On A VPS](docs/deployment/cloudflare-vps.md).
 
+For the current threat model, fixed hardening, and remaining operational risks, see [SSPS Security Review](docs/security-review.md).
+
 ## Verification
 
 ```bash

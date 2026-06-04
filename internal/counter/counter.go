@@ -19,10 +19,17 @@ type PendingStats struct {
 	UniqueVisitors int64
 }
 
+const (
+	defaultMaxPendingSites           = 100000
+	defaultMaxPendingVisitorsPerSite = 100000
+)
+
 type Aggregator struct {
-	mu      sync.Mutex
-	sink    Sink
-	pending map[int64]*siteEvents
+	mu                        sync.Mutex
+	sink                      Sink
+	pending                   map[int64]*siteEvents
+	maxPendingSites           int
+	maxPendingVisitorsPerSite int
 }
 
 type siteEvents struct {
@@ -32,8 +39,10 @@ type siteEvents struct {
 
 func NewAggregator(sink Sink) *Aggregator {
 	return &Aggregator{
-		sink:    sink,
-		pending: make(map[int64]*siteEvents),
+		sink:                      sink,
+		pending:                   make(map[int64]*siteEvents),
+		maxPendingSites:           defaultMaxPendingSites,
+		maxPendingVisitorsPerSite: defaultMaxPendingVisitorsPerSite,
 	}
 }
 
@@ -47,11 +56,17 @@ func (a *Aggregator) Record(siteID int64, visitorID string) {
 
 	events := a.pending[siteID]
 	if events == nil {
+		if a.maxPendingSites > 0 && len(a.pending) >= a.maxPendingSites {
+			return
+		}
 		events = &siteEvents{visitors: make(map[string]bool)}
 		a.pending[siteID] = events
 	}
 	events.hits++
 	if visitorID != "" {
+		if !events.visitors[visitorID] && a.maxPendingVisitorsPerSite > 0 && len(events.visitors) >= a.maxPendingVisitorsPerSite {
+			return
+		}
 		events.visitors[visitorID] = true
 	}
 }

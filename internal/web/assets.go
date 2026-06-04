@@ -163,15 +163,24 @@ func scriptJS() string {
     };
   };
 
+  var reconnectDelay = 1000;
   function connect() {
     var wsProtocol = scriptURL.protocol === "https:" ? "wss:" : "ws:";
     var wsURL = wsProtocol + "//" + scriptURL.host + "/ws?site-id=" + encodeURIComponent(siteId) + "&visitor-id=" + encodeURIComponent(visitorId);
     var socket = new WebSocket(wsURL);
+    socket.onopen = function () {
+      reconnectDelay = 1000;
+    };
     socket.onmessage = function (event) {
       try { publish(JSON.parse(event.data)); } catch (_) {}
     };
     socket.onclose = function () {
-      window.setTimeout(connect, 3000);
+      var delay = reconnectDelay + Math.floor(Math.random() * 1000);
+      reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+      window.setTimeout(connect, delay);
+    };
+    socket.onerror = function () {
+      socket.close();
     };
   }
 

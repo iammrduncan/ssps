@@ -44,11 +44,7 @@ func run() error {
 	aggregator := counter.NewAggregator(store)
 	go aggregator.Run(ctx, flushInterval)
 
-	server := &http.Server{
-		Addr:              addr,
-		Handler:           web.NewServer(store, hub, aggregator),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	server := newHTTPServer(addr, web.NewServer(store, hub, aggregator))
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -89,4 +85,16 @@ func parseDurationEnv(key string, fallback time.Duration) (time.Duration, error)
 		return fallback, nil
 	}
 	return time.ParseDuration(raw)
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    16 << 10,
+	}
 }

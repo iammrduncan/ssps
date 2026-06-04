@@ -3,6 +3,7 @@ package web
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
@@ -22,6 +23,13 @@ import (
 	"github.com/josephduncan/ssps/internal/storage"
 )
 
+const (
+	maxVisitorIDLength          = 128
+	maxClientWebSocketFrameSize = 4096
+	generateRequestsPerWindow   = 20
+	generateRateLimitWindow     = time.Hour
+)
+
 type store interface {
 	CreateSite(context.Context) (int64, error)
 	SiteStats(context.Context, int64) (storage.SiteStats, error)
@@ -29,10 +37,11 @@ type store interface {
 }
 
 type Server struct {
-	store   store
-	hub     *presence.Hub
-	counter *counter.Aggregator
-	mux     *http.ServeMux
+	store           store
+	hub             *presence.Hub
+	counter         *counter.Aggregator
+	generateLimiter *rateLimiter
+	mux             *http.ServeMux
 }
 
 type SiteStats struct {
@@ -49,13 +58,61 @@ type NetworkStats struct {
 	TotalVisits int64 `json:"totalVisits"`
 }
 
+type rateLimiter struct {
+	mu      sync.Mutex
+	limit   int
+	window  time.Duration
+	clients map[string]rateLimitEntry
+}
+
+type rateLimitEntry struct {
+	count int
+	reset time.Time
+}
+
+func newRateLimiter(limit int, window time.Duration) *rateLimiter {
+	return &rateLimiter{
+		limit:   limit,
+		window:  window,
+		clients: make(map[string]rateLimitEntry),
+	}
+}
+
+func (l *rateLimiter) Allow(client string, now time.Time) bool {
+	if l == nil || l.limit <= 0 || l.window <= 0 {
+		return true
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	entry := l.clients[client]
+	if entry.reset.IsZero() || !now.Before(entry.reset) {
+		entry = rateLimitEntry{reset: now.Add(l.window)}
+	}
+	if entry.count >= l.limit {
+		l.clients[client] = entry
+		return false
+	}
+	entry.count++
+	l.clients[client] = entry
+	return true
+}
+
 func NewServer(store store, hub *presence.Hub, aggregator *counter.Aggregator) http.Handler {
-	server := &Server{store: store, hub: hub, counter: aggregator, mux: http.NewServeMux()}
+	server := &Server{
+		store:           store,
+		hub:             hub,
+		counter:         aggregator,
+		generateLimiter: newRateLimiter(generateRequestsPerWindow, generateRateLimitWindow),
+		mux:             http.NewServeMux(),
+	}
 	server.routes()
 	return server
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
 	s.mux.ServeHTTP(w, r)
 }
 
@@ -86,6 +143,11 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
+	if !s.generateLimiter.Allow(clientID(r), time.Now()) {
+		http.Error(w, "too many site ids generated, try again later", http.StatusTooManyRequests)
+		return
+	}
+
 	siteID, err := s.store.CreateSite(r.Context())
 	if err != nil {
 		http.Error(w, "could not create site id", http.StatusInternalServerError)
@@ -93,6 +155,8 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	fmt.Fprint(w, renderGenerate(siteID, absoluteScriptURL(r)))
 }
 
@@ -131,9 +195,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "site-id must be a non-negative number", http.StatusBadRequest)
 		return
 	}
-	visitorID := r.URL.Query().Get("visitor-id")
-	if visitorID == "" {
-		visitorID = fmt.Sprintf("anonymous-%d", time.Now().UnixNano())
+	visitorID, err := parseVisitorID(r.URL.Query().Get("visitor-id"))
+	if err != nil {
+		http.Error(w, "visitor-id must be 128 or fewer visible ASCII characters", http.StatusBadRequest)
+		return
 	}
 
 	conn, err := acceptWebSocket(w, r)
@@ -237,6 +302,36 @@ func writeJSON(w http.ResponseWriter, value any) {
 	}
 }
 
+func clientID(r *http.Request) string {
+	if value := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); value != "" {
+		if idx := strings.IndexByte(value, ','); idx >= 0 {
+			value = value[:idx]
+		}
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil && host != "" {
+		return host
+	}
+	if r.RemoteAddr != "" {
+		return r.RemoteAddr
+	}
+	return "unknown"
+}
+
+func setSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'unsafe-inline'")
+}
+
 func parseSiteStatsPath(path string) (int64, bool) {
 	const prefix = "/api/sites/"
 	const suffix = "/stats"
@@ -254,6 +349,29 @@ func parseSiteID(raw string) (int64, error) {
 		return 0, fmt.Errorf("invalid site id %q", raw)
 	}
 	return value, nil
+}
+
+func parseVisitorID(raw string) (string, error) {
+	if raw == "" {
+		return anonymousVisitorID(), nil
+	}
+	if len(raw) > maxVisitorIDLength {
+		return "", fmt.Errorf("visitor id too long")
+	}
+	for idx := 0; idx < len(raw); idx++ {
+		if raw[idx] < 0x21 || raw[idx] > 0x7E {
+			return "", fmt.Errorf("visitor id contains unsupported byte")
+		}
+	}
+	return raw, nil
+}
+
+func anonymousVisitorID() string {
+	var randomBytes [16]byte
+	if _, err := rand.Read(randomBytes[:]); err == nil {
+		return "anonymous-" + base64.RawURLEncoding.EncodeToString(randomBytes[:])
+	}
+	return fmt.Sprintf("anonymous-%d", time.Now().UnixNano())
 }
 
 func absoluteScriptURL(r *http.Request) string {
@@ -282,11 +400,15 @@ func acceptWebSocket(w http.ResponseWriter, r *http.Request) (*wsConn, error) {
 		http.Error(w, "websocket upgrade required", http.StatusBadRequest)
 		return nil, fmt.Errorf("websocket upgrade required")
 	}
+	if r.Header.Get("Sec-WebSocket-Version") != "13" {
+		http.Error(w, "unsupported websocket version", http.StatusBadRequest)
+		return nil, fmt.Errorf("unsupported websocket version")
+	}
 
-	key := r.Header.Get("Sec-WebSocket-Key")
-	if key == "" {
-		http.Error(w, "missing websocket key", http.StatusBadRequest)
-		return nil, fmt.Errorf("missing websocket key")
+	key := strings.TrimSpace(r.Header.Get("Sec-WebSocket-Key"))
+	if !validWebSocketKey(key) {
+		http.Error(w, "invalid websocket key", http.StatusBadRequest)
+		return nil, fmt.Errorf("invalid websocket key")
 	}
 
 	hijacker, ok := w.(http.Hijacker)
@@ -297,6 +419,10 @@ func acceptWebSocket(w http.ResponseWriter, r *http.Request) (*wsConn, error) {
 
 	netConn, rw, err := hijacker.Hijack()
 	if err != nil {
+		return nil, err
+	}
+	if err := netConn.SetDeadline(time.Time{}); err != nil {
+		netConn.Close()
 		return nil, err
 	}
 
@@ -353,8 +479,20 @@ func (c *wsConn) readFrame() (byte, []byte, error) {
 		return 0, nil, err
 	}
 
+	if header[0]&0x70 != 0 {
+		return 0, nil, fmt.Errorf("websocket frame uses reserved bits")
+	}
+	if header[0]&0x80 == 0 {
+		return 0, nil, fmt.Errorf("websocket fragmented frames are unsupported")
+	}
 	opcode := header[0] & 0x0F
 	masked := header[1]&0x80 != 0
+	if !masked {
+		return 0, nil, fmt.Errorf("websocket client frame must be masked")
+	}
+	if !validClientOpcode(opcode) {
+		return 0, nil, fmt.Errorf("unsupported websocket opcode: %d", opcode)
+	}
 	length := uint64(header[1] & 0x7F)
 	switch length {
 	case 126:
@@ -370,25 +508,24 @@ func (c *wsConn) readFrame() (byte, []byte, error) {
 		}
 		length = binary.BigEndian.Uint64(extended)
 	}
-	if length > 1<<20 {
+	if isControlOpcode(opcode) && length > 125 {
+		return 0, nil, fmt.Errorf("websocket control frame too large: %d", length)
+	}
+	if length > maxClientWebSocketFrameSize {
 		return 0, nil, fmt.Errorf("websocket frame too large: %d", length)
 	}
 
 	var mask [4]byte
-	if masked {
-		if _, err := io.ReadFull(c.reader, mask[:]); err != nil {
-			return 0, nil, err
-		}
+	if _, err := io.ReadFull(c.reader, mask[:]); err != nil {
+		return 0, nil, err
 	}
 
-	payload := make([]byte, length)
+	payload := make([]byte, int(length))
 	if _, err := io.ReadFull(c.reader, payload); err != nil {
 		return 0, nil, err
 	}
-	if masked {
-		for idx := range payload {
-			payload[idx] ^= mask[idx%4]
-		}
+	for idx := range payload {
+		payload[idx] ^= mask[idx%4]
 	}
 	return opcode, payload, nil
 }
@@ -423,6 +560,24 @@ func (c *wsConn) writeFrame(opcode byte, payload []byte) error {
 func websocketAccept(key string) string {
 	sum := sha1.Sum([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
 	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+func validWebSocketKey(key string) bool {
+	decoded, err := base64.StdEncoding.Strict().DecodeString(key)
+	return err == nil && len(decoded) == 16
+}
+
+func validClientOpcode(opcode byte) bool {
+	switch opcode {
+	case 0x1, 0x2, 0x8, 0x9, 0xA:
+		return true
+	default:
+		return false
+	}
+}
+
+func isControlOpcode(opcode byte) bool {
+	return opcode == 0x8 || opcode == 0x9 || opcode == 0xA
 }
 
 func headerContains(headers http.Header, key string, value string) bool {
