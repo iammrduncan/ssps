@@ -37,16 +37,17 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	if !strings.Contains(home.Body.String(), "The top stats are network-wide") {
 		t.Fatalf("/ body missing network-wide stats explanation")
 	}
-	if !strings.Contains(home.Body.String(), `<span class="value" data-ssps-live-count>`) {
-		t.Fatalf("/ body missing live-updating network stat")
+	if !strings.Contains(home.Body.String(), `<span class="value" data-ssps-network-live-users>`) ||
+		!strings.Contains(home.Body.String(), `<span class="value" data-ssps-network-total-visits>`) {
+		t.Fatalf("/ body missing live-updating network stats")
 	}
 	if !strings.Contains(home.Body.String(), `<span id="ssps-live-count">0</span>`) ||
 		!strings.Contains(home.Body.String(), `<span id="ssps-visit-count">0</span>`) ||
 		!strings.Contains(home.Body.String(), `<span id="ssps-unique-visit-count">0</span>`) {
 		t.Fatalf("/ body missing rendered ssps-prefixed example spans")
 	}
-	if !strings.Contains(home.Body.String(), `src="/ssps.js" data-site-id="0"`) {
-		t.Fatalf("/ body missing self-use script for reserved site 0")
+	if !strings.Contains(home.Body.String(), `src="/ssps.js" data-site-id="0" data-network-stats`) {
+		t.Fatalf("/ body missing self-use script with network stats mode")
 	}
 	if strings.Contains(home.Body.String(), `id="live-count"`) || strings.Contains(home.Body.String(), `id="visit-count"`) || strings.Contains(home.Body.String(), `id="unique-visit-count"`) {
 		t.Fatalf("/ body contains unprefixed counter span id")
@@ -78,6 +79,10 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	}
 	if strings.Contains(script.Body.String(), "#visit-count") || strings.Contains(script.Body.String(), "#unique-visit-count") {
 		t.Fatalf("script body contains unprefixed counter ID selectors")
+	}
+	if !strings.Contains(script.Body.String(), "data-ssps-network-total-visits") ||
+		!strings.Contains(script.Body.String(), "/api/stats") {
+		t.Fatalf("script body missing network stats updater")
 	}
 
 	stats := get(t, server, "/api/stats")
@@ -157,7 +162,7 @@ func TestWebSocketConnectionCountsLiveUserAndVisit(t *testing.T) {
 	}
 }
 
-func TestReservedSiteZeroReportsNetworkLiveUsers(t *testing.T) {
+func TestReservedSiteZeroReportsOwnLiveWhileNetworkStatsAggregate(t *testing.T) {
 	t.Parallel()
 
 	server := newTestServer(t)
@@ -193,8 +198,26 @@ func TestReservedSiteZeroReportsNetworkLiveUsers(t *testing.T) {
 	if site.SiteID != 0 {
 		t.Fatalf("site id = %d, want 0", site.SiteID)
 	}
-	if site.Live != 2 {
-		t.Fatalf("reserved site live = %d, want network live users 2", site.Live)
+	if site.Live != 1 {
+		t.Fatalf("reserved site live = %d, want only site zero live users 1", site.Live)
+	}
+
+	stats := get(t, server, "/api/stats")
+	if stats.Code != http.StatusOK {
+		t.Fatalf("/api/stats status = %d, want 200", stats.Code)
+	}
+	var network NetworkStats
+	if err := json.Unmarshal(stats.Body.Bytes(), &network); err != nil {
+		t.Fatalf("decode network stats: %v", err)
+	}
+	if network.LiveUsers != 2 {
+		t.Fatalf("network live users = %d, want 2", network.LiveUsers)
+	}
+	if network.ActiveSites != 2 {
+		t.Fatalf("network active sites = %d, want 2", network.ActiveSites)
+	}
+	if network.TotalVisits != 2 {
+		t.Fatalf("network total visits = %d, want site zero plus site one visits", network.TotalVisits)
 	}
 }
 

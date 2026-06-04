@@ -37,10 +37,10 @@ func renderHome(stats NetworkStats) string {
     <p>SSPS gives any website a tiny live visitor counter and visit counter with one script tag.</p>
     <p>The top stats are network-wide across every site using SSPS.</p>
     <div class="stats">
-      <div class="stat"><span class="value">%d</span><span class="label">IDs created</span></div>
-      <div class="stat"><span class="value" data-ssps-live-count>%d</span><span class="label">users live now</span></div>
-      <div class="stat"><span class="value">%d</span><span class="label">active sites</span></div>
-      <div class="stat"><span class="value">%d</span><span class="label">total visits</span></div>
+      <div class="stat"><span class="value" data-ssps-network-ids-created>%d</span><span class="label">IDs created</span></div>
+      <div class="stat"><span class="value" data-ssps-network-live-users>%d</span><span class="label">users live now</span></div>
+      <div class="stat"><span class="value" data-ssps-network-active-sites>%d</span><span class="label">active sites</span></div>
+      <div class="stat"><span class="value" data-ssps-network-total-visits>%d</span><span class="label">total visits</span></div>
     </div>
     <h2>Get Started</h2>
     <p>Visit <a href="/generate">/generate</a> to create a numeric site ID and copy the script tag.</p>
@@ -68,7 +68,7 @@ const stats = window.SSPS.getStats()</code></pre>
       <li><code>GET /api/sites/{siteID}/stats</code> for one site.</li>
     </ul>
   </main>
-  <script async src="/ssps.js" data-site-id="0"></script>
+  <script async src="/ssps.js" data-site-id="0" data-network-stats></script>
 </body>
 </html>`, stats.IDsCreated, stats.LiveUsers, stats.ActiveSites, stats.TotalVisits)
 }
@@ -134,6 +134,22 @@ func scriptJS() string {
     setText("#ssps-unique-visit-count,[data-ssps-unique-visit-count]", state.uniqueVisitors);
     listeners.forEach(function (listener) { listener(state); });
     window.dispatchEvent(new CustomEvent("ssps:update", { detail: state }));
+    refreshNetworkStats();
+  }
+
+  function publishNetworkStats(stats) {
+    setText("[data-ssps-network-ids-created]", stats.idsCreated);
+    setText("[data-ssps-network-live-users]", stats.liveUsers);
+    setText("[data-ssps-network-active-sites]", stats.activeSites);
+    setText("[data-ssps-network-total-visits]", stats.totalVisits);
+  }
+
+  function refreshNetworkStats() {
+    if (!script || !script.dataset || !("networkStats" in script.dataset) || !window.fetch) return;
+    fetch(scriptURL.origin + "/api/stats", { cache: "no-store" })
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (stats) { if (stats) publishNetworkStats(stats); })
+      .catch(function () {});
   }
 
   window.SSPS = window.SSPS || {};
@@ -158,6 +174,10 @@ func scriptJS() string {
     };
   }
 
+  refreshNetworkStats();
+  if (script && script.dataset && ("networkStats" in script.dataset)) {
+    window.setInterval(refreshNetworkStats, 5000);
+  }
   connect();
 })();`
 }
