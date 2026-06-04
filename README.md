@@ -115,6 +115,14 @@ For high WebSocket counts on a small Linux VPS:
 
 For a full VPS deployment guide with `systemd`, crash/reboot restart behavior, and Cloudflare routing, see [Deploy SSPS Behind Cloudflare On A VPS](docs/deployment/cloudflare-vps.md).
 
+For a fresh Ubuntu VPS, edit [deploy/ssps-install.conf](deploy/ssps-install.conf), then run:
+
+```bash
+sudo ./scripts/install-ubuntu.sh
+```
+
+Rerun the same command after config changes to rebuild SSPS, rewrite systemd/env/sysctl files, and restart the service.
+
 For the current threat model, fixed hardening, and remaining operational risks, see [SSPS Security Review](docs/security-review.md).
 
 ## Verification
@@ -122,4 +130,5 @@ For the current threat model, fixed hardening, and remaining operational risks, 
 ```bash
 go test ./...
 go build ./cmd/ssps
+bash tests/install_ubuntu_test.sh
 ```

@@ -13,6 +13,33 @@ Cloudflare Tunnel is the easiest Cloudflare-to-VPS route because `cloudflared` o
 
 ## Build The Server
 
+### Automated Ubuntu Install
+
+On a fresh Ubuntu VPS, clone the repo, edit the install config, and run the installer:
+
+```bash
+git clone https://github.com/iammrduncan/ssps.git
+cd ssps
+nano deploy/ssps-install.conf
+sudo ./scripts/install-ubuntu.sh
+```
+
+The default config installs SSPS into `/opt/ssps`, keeps data at `/var/lib/ssps`, writes `/etc/default/ssps`, writes `/etc/systemd/system/ssps.service`, applies optional sysctl tuning, enables the service, starts it, and checks `/healthz`.
+
+To update an existing install, edit `deploy/ssps-install.conf` and rerun:
+
+```bash
+sudo ./scripts/install-ubuntu.sh
+```
+
+The second run rebuilds the binary, rewrites config files, reloads systemd, restarts SSPS, and runs the same health check. To preview rendered files without touching the VPS:
+
+```bash
+./scripts/install-ubuntu.sh --dry-run --output-dir /tmp/ssps-install-preview
+```
+
+### Manual Install
+
 On the VPS, install Go, SQLite, and the SQLite C library headers. On Ubuntu or Debian:
 
 ```bash
