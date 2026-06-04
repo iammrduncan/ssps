@@ -34,10 +34,13 @@ func TestServerRoutesGenerateScriptAndStats(t *testing.T) {
 	if !strings.Contains(home.Body.String(), "Stupid Simple Presence Service") {
 		t.Fatalf("/ body missing service name")
 	}
-	if !strings.Contains(home.Body.String(), `id="ssps-visit-count"`) {
-		t.Fatalf("/ body missing ssps-prefixed visit span id")
+	if !strings.Contains(home.Body.String(), `<span class="value" id="ssps-live-count">`) {
+		t.Fatalf("/ body missing ssps-prefixed live count span id")
 	}
-	if strings.Contains(home.Body.String(), `id="visit-count"`) || strings.Contains(home.Body.String(), `id="unique-visit-count"`) {
+	if !strings.Contains(home.Body.String(), `src="/ssps.js" data-site-id="0"`) {
+		t.Fatalf("/ body missing self-use script for reserved site 0")
+	}
+	if strings.Contains(home.Body.String(), `id="live-count"`) || strings.Contains(home.Body.String(), `id="visit-count"`) || strings.Contains(home.Body.String(), `id="unique-visit-count"`) {
 		t.Fatalf("/ body contains unprefixed counter span id")
 	}
 
@@ -143,6 +146,47 @@ func TestWebSocketConnectionCountsLiveUserAndVisit(t *testing.T) {
 	siteStats := get(t, server, "/api/sites/0/stats")
 	if siteStats.Code != http.StatusOK {
 		t.Fatalf("/api/sites/0/stats status = %d, want 200", siteStats.Code)
+	}
+}
+
+func TestReservedSiteZeroReportsNetworkLiveUsers(t *testing.T) {
+	t.Parallel()
+
+	server := newTestServer(t)
+	httpServer := httptest.NewServer(server.Handler)
+	defer httpServer.Close()
+
+	siteZeroConn, siteZeroReader, err := dialWebSocket(httpServer.URL, "/ws?site-id=0&visitor-id=self")
+	if err != nil {
+		t.Fatalf("dial site zero websocket: %v", err)
+	}
+	defer siteZeroConn.Close()
+	if _, err := readServerTextFrame(siteZeroReader); err != nil {
+		t.Fatalf("read site zero initial payload: %v", err)
+	}
+	if _, err := readServerTextFrame(siteZeroReader); err != nil {
+		t.Fatalf("read site zero self-broadcast payload: %v", err)
+	}
+
+	siteOneConn, _, err := dialWebSocket(httpServer.URL, "/ws?site-id=1&visitor-id=customer")
+	if err != nil {
+		t.Fatalf("dial site one websocket: %v", err)
+	}
+	defer siteOneConn.Close()
+
+	payload, err := readServerTextFrame(siteZeroReader)
+	if err != nil {
+		t.Fatalf("read site zero update payload: %v", err)
+	}
+	var site SiteStats
+	if err := json.Unmarshal(payload, &site); err != nil {
+		t.Fatalf("decode site zero update payload: %v", err)
+	}
+	if site.SiteID != 0 {
+		t.Fatalf("site id = %d, want 0", site.SiteID)
+	}
+	if site.Live != 2 {
+		t.Fatalf("reserved site live = %d, want network live users 2", site.Live)
 	}
 }
 

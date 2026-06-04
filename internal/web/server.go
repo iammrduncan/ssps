@@ -146,14 +146,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	connection, updates := s.hub.Register(siteID)
 	defer func() {
 		s.hub.Unregister(connection)
-		s.hub.Broadcast(siteID)
+		s.broadcastSiteChange(siteID)
 	}()
 
 	s.counter.Record(siteID, visitorID)
 	if err := s.writeSiteStats(r.Context(), conn, siteID); err != nil {
 		return
 	}
-	s.hub.Broadcast(siteID)
+	s.broadcastSiteChange(siteID)
 
 	done := make(chan struct{})
 	go func() {
@@ -188,9 +188,13 @@ func (s *Server) siteStats(ctx context.Context, siteID int64) (SiteStats, error)
 		return SiteStats{}, err
 	}
 	pending := s.counter.Pending(siteID)
+	live := s.hub.SiteLive(siteID)
+	if siteID == 0 {
+		live = s.hub.LiveUsers()
+	}
 	return SiteStats{
 		SiteID:         siteID,
-		Live:           s.hub.SiteLive(siteID),
+		Live:           live,
 		TotalHits:      stored.TotalHits + pending.Hits,
 		UniqueVisitors: stored.UniqueVisitors + pending.UniqueVisitors,
 	}, nil
@@ -219,6 +223,13 @@ func (s *Server) writeSiteStats(ctx context.Context, conn *wsConn, siteID int64)
 		return err
 	}
 	return conn.WriteText(ctx, payload)
+}
+
+func (s *Server) broadcastSiteChange(siteID int64) {
+	s.hub.Broadcast(siteID)
+	if siteID != 0 {
+		s.hub.Broadcast(0)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, value any) {

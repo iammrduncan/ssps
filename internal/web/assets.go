@@ -34,7 +34,7 @@ func renderHome(stats NetworkStats) string {
     <p>SSPS gives any website a tiny live visitor counter and visit counter with one script tag.</p>
     <div class="stats">
       <div class="stat"><span class="value">%d</span><span class="label">IDs created</span></div>
-      <div class="stat"><span class="value">%d</span><span class="label">users live now</span></div>
+      <div class="stat"><span class="value" id="ssps-live-count">%d</span><span class="label">users live now</span></div>
       <div class="stat"><span class="value">%d</span><span class="label">active sites</span></div>
       <div class="stat"><span class="value">%d</span><span class="label">total visits</span></div>
     </div>
@@ -58,6 +58,7 @@ const stats = window.SSPS.getStats()</code></pre>
       <li><code>GET /api/sites/{siteID}/stats</code> for one site.</li>
     </ul>
   </main>
+  <script async src="/ssps.js" data-site-id="0"></script>
 </body>
 </html>`, stats.IDsCreated, stats.LiveUsers, stats.ActiveSites, stats.TotalVisits)
 }
