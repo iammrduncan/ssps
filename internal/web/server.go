@@ -126,9 +126,9 @@ func (s *Server) handleSiteStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	siteID, err := parsePositiveInt(r.URL.Query().Get("site-id"))
+	siteID, err := parseSiteID(r.URL.Query().Get("site-id"))
 	if err != nil {
-		http.Error(w, "site-id must be a positive number", http.StatusBadRequest)
+		http.Error(w, "site-id must be a non-negative number", http.StatusBadRequest)
 		return
 	}
 	visitorID := r.URL.Query().Get("visitor-id")
@@ -237,14 +237,14 @@ func parseSiteStatsPath(path string) (int64, bool) {
 		return 0, false
 	}
 	raw := strings.TrimSuffix(strings.TrimPrefix(path, prefix), suffix)
-	siteID, err := parsePositiveInt(raw)
+	siteID, err := parseSiteID(raw)
 	return siteID, err == nil
 }
 
-func parsePositiveInt(raw string) (int64, error) {
+func parseSiteID(raw string) (int64, error) {
 	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || value <= 0 {
-		return 0, fmt.Errorf("invalid positive integer %q", raw)
+	if err != nil || value < 0 {
+		return 0, fmt.Errorf("invalid site id %q", raw)
 	}
 	return value, nil
 }

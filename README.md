@@ -34,6 +34,8 @@ Embed the generated script on any site or page that should count toward the same
 
 Each browser tab with the script loaded counts as one active live visitor until its WebSocket disconnects.
 
+Site ID `0` is reserved for SSPS itself. Generated customer IDs start at `1`.
+
 ## DOM Counters
 
 The script updates these elements when present:
@@ -113,4 +115,3 @@ For high WebSocket counts on a small Linux VPS:
 go test ./...
 go build ./cmd/ssps
 ```
-

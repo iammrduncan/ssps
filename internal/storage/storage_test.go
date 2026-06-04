@@ -65,3 +65,42 @@ func TestStoreCreatesSitesAndAggregatesCounters(t *testing.T) {
 		t.Fatalf("total visits = %d, want 6", networkStats.TotalVisits)
 	}
 }
+
+func TestStoreAllowsReservedSiteZeroCounters(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, err := Open(filepath.Join(t.TempDir(), "ssps.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.ApplyVisitBatch(ctx, []VisitBatch{
+		{SiteID: 0, Hits: 2, VisitorIDs: []string{"self", "self"}},
+	}); err != nil {
+		t.Fatalf("apply reserved site batch: %v", err)
+	}
+
+	stats, err := store.SiteStats(ctx, 0)
+	if err != nil {
+		t.Fatalf("reserved site stats: %v", err)
+	}
+	if stats.SiteID != 0 {
+		t.Fatalf("site id = %d, want 0", stats.SiteID)
+	}
+	if stats.TotalHits != 2 {
+		t.Fatalf("total hits = %d, want 2", stats.TotalHits)
+	}
+	if stats.UniqueVisitors != 1 {
+		t.Fatalf("unique visitors = %d, want 1", stats.UniqueVisitors)
+	}
+
+	createdID, err := store.CreateSite(ctx)
+	if err != nil {
+		t.Fatalf("create customer site: %v", err)
+	}
+	if createdID != 1 {
+		t.Fatalf("first generated customer id = %d, want 1", createdID)
+	}
+}

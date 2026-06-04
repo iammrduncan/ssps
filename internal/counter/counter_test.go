@@ -62,6 +62,28 @@ func TestAggregatorRestoresEventsWhenFlushFails(t *testing.T) {
 	}
 }
 
+func TestAggregatorRecordsReservedSiteZero(t *testing.T) {
+	t.Parallel()
+
+	sink := &recordingSink{}
+	aggregator := NewAggregator(sink)
+	aggregator.Record(0, "self")
+	aggregator.Record(0, "self")
+
+	pending := aggregator.Pending(0)
+	if pending.Hits != 2 {
+		t.Fatalf("pending hits = %d, want 2", pending.Hits)
+	}
+	if pending.UniqueVisitors != 1 {
+		t.Fatalf("pending unique visitors = %d, want 1", pending.UniqueVisitors)
+	}
+
+	if err := aggregator.Flush(context.Background()); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	assertBatch(t, sink.batches, 0, 2, []string{"self"})
+}
+
 type recordingSink struct {
 	err     error
 	batches []storage.VisitBatch

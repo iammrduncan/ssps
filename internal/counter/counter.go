@@ -38,7 +38,7 @@ func NewAggregator(sink Sink) *Aggregator {
 }
 
 func (a *Aggregator) Record(siteID int64, visitorID string) {
-	if siteID <= 0 {
+	if siteID < 0 {
 		return
 	}
 

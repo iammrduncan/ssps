@@ -142,7 +142,7 @@ func (s *Store) ApplyVisitBatch(ctx context.Context, batches []VisitBatch) error
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, batch := range batches {
-		if batch.SiteID <= 0 || batch.Hits <= 0 {
+		if batch.SiteID < 0 || batch.Hits <= 0 {
 			continue
 		}
 

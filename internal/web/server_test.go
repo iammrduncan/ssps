@@ -83,7 +83,7 @@ func TestWebSocketConnectionCountsLiveUserAndVisit(t *testing.T) {
 	httpServer := httptest.NewServer(server.Handler)
 	defer httpServer.Close()
 
-	conn, reader, err := dialWebSocket(httpServer.URL, "/ws?site-id=77&visitor-id=abc")
+	conn, reader, err := dialWebSocket(httpServer.URL, "/ws?site-id=0&visitor-id=abc")
 	if err != nil {
 		t.Fatalf("dial websocket: %v", err)
 	}
@@ -97,8 +97,8 @@ func TestWebSocketConnectionCountsLiveUserAndVisit(t *testing.T) {
 	if err := json.Unmarshal(payload, &site); err != nil {
 		t.Fatalf("decode websocket payload: %v", err)
 	}
-	if site.SiteID != 77 {
-		t.Fatalf("site id = %d, want 77", site.SiteID)
+	if site.SiteID != 0 {
+		t.Fatalf("site id = %d, want 0", site.SiteID)
 	}
 	if site.Live != 1 {
 		t.Fatalf("live = %d, want 1", site.Live)
@@ -120,6 +120,11 @@ func TestWebSocketConnectionCountsLiveUserAndVisit(t *testing.T) {
 	}
 	if network.TotalVisits != 1 {
 		t.Fatalf("network total visits = %d, want 1 pending visit included", network.TotalVisits)
+	}
+
+	siteStats := get(t, server, "/api/sites/0/stats")
+	if siteStats.Code != http.StatusOK {
+		t.Fatalf("/api/sites/0/stats status = %d, want 200", siteStats.Code)
 	}
 }
 
