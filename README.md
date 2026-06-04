@@ -109,6 +109,8 @@ For high WebSocket counts on a small Linux VPS:
 - Keep proxy read timeouts high enough for long-lived sockets.
 - Use one process for v1. If multiple app instances are needed later, move presence fanout and live counters behind Redis, NATS, or another shared coordination layer.
 
+For a full VPS deployment guide with `systemd`, crash/reboot restart behavior, and Cloudflare routing, see [Deploy SSPS Behind Cloudflare On A VPS](docs/deployment/cloudflare-vps.md).
+
 ## Verification
 
 ```bash
